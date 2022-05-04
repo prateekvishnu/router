@@ -12,7 +12,6 @@ RUN ${HOME}/.cargo/bin/cargo install -f cargo-fuzz
 ADD . /router
 WORKDIR /router
 
-RUN git submodule init && git submodule update
 
 RUN cd fuzz && ${HOME}/.cargo/bin/cargo +nightly fuzz build
 
