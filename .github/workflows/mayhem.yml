@@ -46,6 +46,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          file: dockerfiles/Dockerfile_mayhem
 
       - name: Start analysis for router
         uses: ForAllSecure/mcode-action@v1
