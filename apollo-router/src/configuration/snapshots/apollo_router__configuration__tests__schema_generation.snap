@@ -1,6 +1,6 @@
 ---
 source: apollo-router/src/configuration/mod.rs
-assertion_line: 562
+assertion_line: 848
 expression: "&schema"
 ---
 {
@@ -9,6 +9,28 @@ expression: "&schema"
   "description": "The configuration for the router. Currently maintains a mapping of subgraphs.",
   "type": "object",
   "properties": {
+    "csrf": {
+      "type": "object",
+      "properties": {
+        "required_headers": {
+          "description": "Override the headers to check for by setting custom_headers Note that if you set required_headers here, you may also want to have a look at your `CORS` configuration, and make sure you either: - did not set any `allow_headers` list (so it defaults to `mirror_request`) - added your required headers to the allow_headers list, as shown in the `examples/cors-and-csrf/custom-headers.router.yaml` files.",
+          "default": [
+            "x-apollo-operation-name",
+            "apollo-require-preflight"
+          ],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unsafe_disabled": {
+          "description": "The CSRF plugin is enabled by default; set unsafe_disabled = true to disable the plugin behavior Note that setting this to true is deemed unsafe. See <https://developer.mozilla.org/en-US/docs/Glossary/CSRF>.",
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
     "forbid_mutations": {
       "type": "boolean"
     },
@@ -276,45 +298,21 @@ expression: "&schema"
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "rhai": {
+      "description": "Configuration for the Rhai Plugin",
+      "type": "object",
+      "properties": {
+        "main": {
+          "type": "string",
+          "nullable": true
         },
-        "experimental.rhai": {
-          "type": "object",
-          "required": [
-            "filename"
-          ],
-          "properties": {
-            "filename": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "experimental.traffic_shaping": {
-          "type": "object",
-          "properties": {
-            "all": {
-              "type": "object",
-              "properties": {
-                "dedup": {
-                  "type": "boolean",
-                  "nullable": true
-                }
-              },
-              "nullable": true
-            },
-            "subgraphs": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "object",
-                "properties": {
-                  "dedup": {
-                    "type": "boolean",
-                    "nullable": true
-                  }
-                }
-              }
-            }
-          }
+        "scripts": {
+          "type": "string",
+          "nullable": true
         }
       },
       "additionalProperties": false
@@ -325,7 +323,10 @@ expression: "&schema"
         "listen": "127.0.0.1:4000",
         "cors": null,
         "introspection": true,
-        "landing_page": true
+        "landing_page": true,
+        "endpoint": "/",
+        "health_check_path": "/.well-known/apollo/server-health",
+        "experimental_defer_support": false
       },
       "type": "object",
       "properties": {
@@ -347,16 +348,13 @@ expression: "&schema"
               "nullable": true
             },
             "allow_headers": {
-              "description": "The headers to allow. Defaults to the required request header for Apollo Studio",
-              "default": [
-                "Content-Type",
-                "apollographql-client-name",
-                "apollographql-client-version"
-              ],
+              "description": "The headers to allow. If this is not set, we will default to the `mirror_request` mode, which mirrors the received `access-control-request-headers` preflight has sent.\n\nNote that if you set headers here, you also want to have a look at your `CSRF` plugins configuration, and make sure you either: - accept `x-apollo-operation-name` AND / OR `apollo-require-preflight` - defined `csrf` required headers in your yml configuration, as shown in the `examples/cors-and-csrf/custom-headers.router.yaml` files.",
+              "default": null,
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "nullable": true
             },
             "expose_headers": {
               "description": "Which response headers should be made available to scripts running in the browser, in response to a cross-origin request.",
@@ -381,7 +379,9 @@ expression: "&schema"
             },
             "origins": {
               "description": "The origin(s) to allow requests from. Defaults to `https://studio.apollographql.com/` for Apollo Studio.",
-              "default": [],
+              "default": [
+                "https://studio.apollographql.com"
+              ],
               "type": "array",
               "items": {
                 "type": "string"
@@ -390,6 +390,21 @@ expression: "&schema"
           },
           "additionalProperties": false,
           "nullable": true
+        },
+        "endpoint": {
+          "description": "GraphQL endpoint default: \"/\"",
+          "default": "/",
+          "type": "string"
+        },
+        "experimental_defer_support": {
+          "description": "Experimental @defer directive support default: false",
+          "default": false,
+          "type": "boolean"
+        },
+        "health_check_path": {
+          "description": "healthCheck path default: \"/.well-known/apollo/server-health\"",
+          "default": "/.well-known/apollo/server-health",
+          "type": "string"
         },
         "introspection": {
           "description": "introspection queries enabled by default",
@@ -424,14 +439,6 @@ expression: "&schema"
         "apollo": {
           "type": "object",
           "properties": {
-            "apollo_graph_ref": {
-              "type": "string",
-              "nullable": true
-            },
-            "apollo_key": {
-              "type": "string",
-              "nullable": true
-            },
             "client_name_header": {
               "default": "apollographql-client-name",
               "type": "string",
@@ -444,7 +451,6 @@ expression: "&schema"
             },
             "endpoint": {
               "type": "string",
-              "format": "uri",
               "nullable": true
             }
           },
@@ -456,10 +462,660 @@ expression: "&schema"
           "properties": {
             "common": {
               "type": "object",
-              "required": [
-                "delay_interval"
-              ],
               "properties": {
+                "attributes": {
+                  "description": "Configuration to add custom labels/attributes to metrics",
+                  "type": "object",
+                  "properties": {
+                    "router": {
+                      "description": "Configuration to forward header values or body values from router request/response in metric attributes/labels",
+                      "type": "object",
+                      "properties": {
+                        "context": {
+                          "description": "Configuration to forward values from the context custom attributes/labels in metrics",
+                          "type": "array",
+                          "items": {
+                            "description": "Configuration to forward context values in metric attributes/labels",
+                            "type": "object",
+                            "required": [
+                              "named"
+                            ],
+                            "properties": {
+                              "default": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "named": {
+                                "type": "string"
+                              },
+                              "rename": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "nullable": true
+                        },
+                        "request": {
+                          "description": "Configuration to forward headers or body values from the request custom attributes/labels in metrics",
+                          "type": "object",
+                          "properties": {
+                            "body": {
+                              "description": "Forward body values as custom attributes/labels in metrics",
+                              "type": "array",
+                              "items": {
+                                "description": "Configuration to forward body values in metric attributes/labels",
+                                "type": "object",
+                                "required": [
+                                  "name",
+                                  "path"
+                                ],
+                                "properties": {
+                                  "default": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "nullable": true
+                            },
+                            "header": {
+                              "description": "Forward header values as custom attributes/labels in metrics",
+                              "type": "array",
+                              "items": {
+                                "description": "Configuration to forward header values in metric labels",
+                                "anyOf": [
+                                  {
+                                    "description": "Using a named header",
+                                    "type": "object",
+                                    "required": [
+                                      "named"
+                                    ],
+                                    "properties": {
+                                      "default": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "named": {
+                                        "type": "string"
+                                      },
+                                      "rename": {
+                                        "type": "string",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "description": "Using a regex on the header name",
+                                    "type": "object",
+                                    "required": [
+                                      "matching"
+                                    ],
+                                    "properties": {
+                                      "matching": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              },
+                              "nullable": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
+                        "response": {
+                          "description": "Configuration to forward headers or body values from the response custom attributes/labels in metrics",
+                          "type": "object",
+                          "properties": {
+                            "body": {
+                              "description": "Forward body values as custom attributes/labels in metrics",
+                              "type": "array",
+                              "items": {
+                                "description": "Configuration to forward body values in metric attributes/labels",
+                                "type": "object",
+                                "required": [
+                                  "name",
+                                  "path"
+                                ],
+                                "properties": {
+                                  "default": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "path": {
+                                    "type": "string"
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "nullable": true
+                            },
+                            "header": {
+                              "description": "Forward header values as custom attributes/labels in metrics",
+                              "type": "array",
+                              "items": {
+                                "description": "Configuration to forward header values in metric labels",
+                                "anyOf": [
+                                  {
+                                    "description": "Using a named header",
+                                    "type": "object",
+                                    "required": [
+                                      "named"
+                                    ],
+                                    "properties": {
+                                      "default": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "named": {
+                                        "type": "string"
+                                      },
+                                      "rename": {
+                                        "type": "string",
+                                        "nullable": true
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  {
+                                    "description": "Using a regex on the header name",
+                                    "type": "object",
+                                    "required": [
+                                      "matching"
+                                    ],
+                                    "properties": {
+                                      "matching": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  }
+                                ]
+                              },
+                              "nullable": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
+                        "static": {
+                          "description": "Configuration to insert custom attributes/labels in metrics",
+                          "type": "array",
+                          "items": {
+                            "description": "Configuration to insert custom attributes/labels in metrics",
+                            "type": "object",
+                            "required": [
+                              "name",
+                              "value"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "nullable": true
+                        }
+                      },
+                      "additionalProperties": false,
+                      "nullable": true
+                    },
+                    "subgraph": {
+                      "description": "Configuration to forward header values or body values from subgraph request/response in metric attributes/labels",
+                      "type": "object",
+                      "properties": {
+                        "all": {
+                          "type": "object",
+                          "properties": {
+                            "context": {
+                              "description": "Configuration to forward values from the context custom attributes/labels in metrics",
+                              "type": "array",
+                              "items": {
+                                "description": "Configuration to forward context values in metric attributes/labels",
+                                "type": "object",
+                                "required": [
+                                  "named"
+                                ],
+                                "properties": {
+                                  "default": {
+                                    "type": "string",
+                                    "nullable": true
+                                  },
+                                  "named": {
+                                    "type": "string"
+                                  },
+                                  "rename": {
+                                    "type": "string",
+                                    "nullable": true
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "nullable": true
+                            },
+                            "request": {
+                              "description": "Configuration to forward headers or body values from the request custom attributes/labels in metrics",
+                              "type": "object",
+                              "properties": {
+                                "body": {
+                                  "description": "Forward body values as custom attributes/labels in metrics",
+                                  "type": "array",
+                                  "items": {
+                                    "description": "Configuration to forward body values in metric attributes/labels",
+                                    "type": "object",
+                                    "required": [
+                                      "name",
+                                      "path"
+                                    ],
+                                    "properties": {
+                                      "default": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  "nullable": true
+                                },
+                                "header": {
+                                  "description": "Forward header values as custom attributes/labels in metrics",
+                                  "type": "array",
+                                  "items": {
+                                    "description": "Configuration to forward header values in metric labels",
+                                    "anyOf": [
+                                      {
+                                        "description": "Using a named header",
+                                        "type": "object",
+                                        "required": [
+                                          "named"
+                                        ],
+                                        "properties": {
+                                          "default": {
+                                            "type": "string",
+                                            "nullable": true
+                                          },
+                                          "named": {
+                                            "type": "string"
+                                          },
+                                          "rename": {
+                                            "type": "string",
+                                            "nullable": true
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      {
+                                        "description": "Using a regex on the header name",
+                                        "type": "object",
+                                        "required": [
+                                          "matching"
+                                        ],
+                                        "properties": {
+                                          "matching": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      }
+                                    ]
+                                  },
+                                  "nullable": true
+                                }
+                              },
+                              "additionalProperties": false,
+                              "nullable": true
+                            },
+                            "response": {
+                              "description": "Configuration to forward headers or body values from the response custom attributes/labels in metrics",
+                              "type": "object",
+                              "properties": {
+                                "body": {
+                                  "description": "Forward body values as custom attributes/labels in metrics",
+                                  "type": "array",
+                                  "items": {
+                                    "description": "Configuration to forward body values in metric attributes/labels",
+                                    "type": "object",
+                                    "required": [
+                                      "name",
+                                      "path"
+                                    ],
+                                    "properties": {
+                                      "default": {
+                                        "type": "string",
+                                        "nullable": true
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "path": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "additionalProperties": false
+                                  },
+                                  "nullable": true
+                                },
+                                "header": {
+                                  "description": "Forward header values as custom attributes/labels in metrics",
+                                  "type": "array",
+                                  "items": {
+                                    "description": "Configuration to forward header values in metric labels",
+                                    "anyOf": [
+                                      {
+                                        "description": "Using a named header",
+                                        "type": "object",
+                                        "required": [
+                                          "named"
+                                        ],
+                                        "properties": {
+                                          "default": {
+                                            "type": "string",
+                                            "nullable": true
+                                          },
+                                          "named": {
+                                            "type": "string"
+                                          },
+                                          "rename": {
+                                            "type": "string",
+                                            "nullable": true
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      },
+                                      {
+                                        "description": "Using a regex on the header name",
+                                        "type": "object",
+                                        "required": [
+                                          "matching"
+                                        ],
+                                        "properties": {
+                                          "matching": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "additionalProperties": false
+                                      }
+                                    ]
+                                  },
+                                  "nullable": true
+                                }
+                              },
+                              "additionalProperties": false,
+                              "nullable": true
+                            },
+                            "static": {
+                              "description": "Configuration to insert custom attributes/labels in metrics",
+                              "type": "array",
+                              "items": {
+                                "description": "Configuration to insert custom attributes/labels in metrics",
+                                "type": "object",
+                                "required": [
+                                  "name",
+                                  "value"
+                                ],
+                                "properties": {
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "value": {
+                                    "type": "string"
+                                  }
+                                },
+                                "additionalProperties": false
+                              },
+                              "nullable": true
+                            }
+                          },
+                          "additionalProperties": false,
+                          "nullable": true
+                        },
+                        "subgraphs": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                              "context": {
+                                "description": "Configuration to forward values from the context custom attributes/labels in metrics",
+                                "type": "array",
+                                "items": {
+                                  "description": "Configuration to forward context values in metric attributes/labels",
+                                  "type": "object",
+                                  "required": [
+                                    "named"
+                                  ],
+                                  "properties": {
+                                    "default": {
+                                      "type": "string",
+                                      "nullable": true
+                                    },
+                                    "named": {
+                                      "type": "string"
+                                    },
+                                    "rename": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "nullable": true
+                              },
+                              "request": {
+                                "description": "Configuration to forward headers or body values from the request custom attributes/labels in metrics",
+                                "type": "object",
+                                "properties": {
+                                  "body": {
+                                    "description": "Forward body values as custom attributes/labels in metrics",
+                                    "type": "array",
+                                    "items": {
+                                      "description": "Configuration to forward body values in metric attributes/labels",
+                                      "type": "object",
+                                      "required": [
+                                        "name",
+                                        "path"
+                                      ],
+                                      "properties": {
+                                        "default": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string"
+                                        },
+                                        "path": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "nullable": true
+                                  },
+                                  "header": {
+                                    "description": "Forward header values as custom attributes/labels in metrics",
+                                    "type": "array",
+                                    "items": {
+                                      "description": "Configuration to forward header values in metric labels",
+                                      "anyOf": [
+                                        {
+                                          "description": "Using a named header",
+                                          "type": "object",
+                                          "required": [
+                                            "named"
+                                          ],
+                                          "properties": {
+                                            "default": {
+                                              "type": "string",
+                                              "nullable": true
+                                            },
+                                            "named": {
+                                              "type": "string"
+                                            },
+                                            "rename": {
+                                              "type": "string",
+                                              "nullable": true
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        },
+                                        {
+                                          "description": "Using a regex on the header name",
+                                          "type": "object",
+                                          "required": [
+                                            "matching"
+                                          ],
+                                          "properties": {
+                                            "matching": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        }
+                                      ]
+                                    },
+                                    "nullable": true
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "nullable": true
+                              },
+                              "response": {
+                                "description": "Configuration to forward headers or body values from the response custom attributes/labels in metrics",
+                                "type": "object",
+                                "properties": {
+                                  "body": {
+                                    "description": "Forward body values as custom attributes/labels in metrics",
+                                    "type": "array",
+                                    "items": {
+                                      "description": "Configuration to forward body values in metric attributes/labels",
+                                      "type": "object",
+                                      "required": [
+                                        "name",
+                                        "path"
+                                      ],
+                                      "properties": {
+                                        "default": {
+                                          "type": "string",
+                                          "nullable": true
+                                        },
+                                        "name": {
+                                          "type": "string"
+                                        },
+                                        "path": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "additionalProperties": false
+                                    },
+                                    "nullable": true
+                                  },
+                                  "header": {
+                                    "description": "Forward header values as custom attributes/labels in metrics",
+                                    "type": "array",
+                                    "items": {
+                                      "description": "Configuration to forward header values in metric labels",
+                                      "anyOf": [
+                                        {
+                                          "description": "Using a named header",
+                                          "type": "object",
+                                          "required": [
+                                            "named"
+                                          ],
+                                          "properties": {
+                                            "default": {
+                                              "type": "string",
+                                              "nullable": true
+                                            },
+                                            "named": {
+                                              "type": "string"
+                                            },
+                                            "rename": {
+                                              "type": "string",
+                                              "nullable": true
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        },
+                                        {
+                                          "description": "Using a regex on the header name",
+                                          "type": "object",
+                                          "required": [
+                                            "matching"
+                                          ],
+                                          "properties": {
+                                            "matching": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "additionalProperties": false
+                                        }
+                                      ]
+                                    },
+                                    "nullable": true
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "nullable": true
+                              },
+                              "static": {
+                                "description": "Configuration to insert custom attributes/labels in metrics",
+                                "type": "array",
+                                "items": {
+                                  "description": "Configuration to insert custom attributes/labels in metrics",
+                                  "type": "object",
+                                  "required": [
+                                    "name",
+                                    "value"
+                                  ],
+                                  "properties": {
+                                    "name": {
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "additionalProperties": false
+                                },
+                                "nullable": true
+                              }
+                            },
+                            "additionalProperties": false
+                          },
+                          "nullable": true
+                        }
+                      },
+                      "additionalProperties": false,
+                      "nullable": true
+                    }
+                  },
+                  "additionalProperties": false,
+                  "nullable": true
+                },
                 "delay_interval": {
                   "type": "object",
                   "required": [
@@ -477,6 +1133,15 @@ expression: "&schema"
                       "format": "uint64",
                       "minimum": 0.0
                     }
+                  },
+                  "nullable": true
+                },
+                "resources": {
+                  "description": "Resources",
+                  "default": {},
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
                   }
                 }
               },
@@ -490,18 +1155,7 @@ expression: "&schema"
               ],
               "properties": {
                 "endpoint": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "default"
-                      ]
-                    },
-                    {
-                      "type": "string",
-                      "format": "uri"
-                    }
-                  ]
+                  "type": "string"
                 },
                 "grpc": {
                   "type": "object",
@@ -659,23 +1313,10 @@ expression: "&schema"
           "properties": {
             "datadog": {
               "type": "object",
-              "required": [
-                "endpoint"
-              ],
               "properties": {
                 "endpoint": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "default"
-                      ]
-                    },
-                    {
-                      "type": "string",
-                      "format": "uri"
-                    }
-                  ]
+                  "default": "default",
+                  "type": "string"
                 }
               },
               "additionalProperties": false,
@@ -719,8 +1360,7 @@ expression: "&schema"
                       ],
                       "properties": {
                         "endpoint": {
-                          "type": "string",
-                          "format": "uri"
+                          "type": "string"
                         },
                         "password": {
                           "type": "string",
@@ -755,18 +1395,7 @@ expression: "&schema"
               ],
               "properties": {
                 "endpoint": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "default"
-                      ]
-                    },
-                    {
-                      "type": "string",
-                      "format": "uri"
-                    }
-                  ]
+                  "type": "string"
                 },
                 "grpc": {
                   "type": "object",
@@ -1057,10 +1686,14 @@ expression: "&schema"
               "nullable": true
             },
             "zipkin": {
-              "type": [
-                "object",
-                "string"
-              ],
+              "type": "object",
+              "properties": {
+                "endpoint": {
+                  "default": "default",
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false,
               "nullable": true
             }
           },
@@ -1091,6 +1724,63 @@ expression: "&schema"
           "type": "string"
         }
       }
+    },
+    "traffic_shaping": {
+      "type": "object",
+      "properties": {
+        "all": {
+          "type": "object",
+          "properties": {
+            "compression": {
+              "description": "Enable compression for subgraphs (available compressions are deflate, br, gzip)",
+              "type": "string",
+              "enum": [
+                "gzip",
+                "deflate",
+                "br"
+              ],
+              "nullable": true
+            },
+            "query_deduplication": {
+              "description": "Enable query deduplication",
+              "type": "boolean",
+              "nullable": true
+            }
+          },
+          "additionalProperties": false,
+          "nullable": true
+        },
+        "subgraphs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "compression": {
+                "description": "Enable compression for subgraphs (available compressions are deflate, br, gzip)",
+                "type": "string",
+                "enum": [
+                  "gzip",
+                  "deflate",
+                  "br"
+                ],
+                "nullable": true
+              },
+              "query_deduplication": {
+                "description": "Enable query deduplication",
+                "type": "boolean",
+                "nullable": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "variables_deduplication": {
+          "description": "Enable variable deduplication optimization when sending requests to subgraphs (https://github.com/apollographql/router/issues/87)",
+          "type": "boolean",
+          "nullable": true
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

@@ -1,11 +1,17 @@
-use crate::plugins::telemetry::config::MetricsCommon;
-use crate::plugins::telemetry::metrics::{MetricsBuilder, MetricsConfigurator};
-use futures::{Stream, StreamExt};
+use std::time::Duration;
+
+use futures::Stream;
+use futures::StreamExt;
 use opentelemetry::sdk::metrics::selectors;
 use opentelemetry::util::tokio_interval_stream;
-use opentelemetry_otlp::{HttpExporterBuilder, TonicExporterBuilder};
-use std::time::Duration;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::HttpExporterBuilder;
+use opentelemetry_otlp::TonicExporterBuilder;
 use tower::BoxError;
+
+use crate::plugins::telemetry::config::MetricsCommon;
+use crate::plugins::telemetry::metrics::MetricsBuilder;
+use crate::plugins::telemetry::metrics::MetricsConfigurator;
 
 // TODO Remove MetricExporterBuilder once upstream issue is fixed
 // This has to exist because Http is not currently supported for metrics export
@@ -32,7 +38,7 @@ impl MetricsConfigurator for super::super::otlp::Config {
     fn apply(
         &self,
         mut builder: MetricsBuilder,
-        _metrics_config: &MetricsCommon,
+        metrics_config: &MetricsCommon,
     ) -> Result<MetricsBuilder, BoxError> {
         let exporter: MetricExporterBuilder = self.exporter()?;
         match exporter.exporter {
@@ -41,6 +47,13 @@ impl MetricsConfigurator for super::super::otlp::Config {
                     .metrics(tokio::spawn, delayed_interval)
                     .with_exporter(exporter)
                     .with_aggregator_selector(selectors::simple::Selector::Exact)
+                    .with_resource(
+                        metrics_config
+                            .resources
+                            .clone()
+                            .into_iter()
+                            .map(|(k, v)| KeyValue::new(k, v)),
+                    )
                     .build()?;
                 builder = builder.with_meter_provider(exporter.provider());
                 builder = builder.with_exporter(exporter);

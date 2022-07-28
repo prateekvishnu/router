@@ -3,9 +3,9 @@ title: Sending HTTP headers to subgraphs
 description: Configure which headers the Apollo Router sends to which subgraphs
 ---
 
-You can configure which HTTP headers the Apollo Router includes in its requests to each of your subgraphs. You can define header rules for individual subgraphs, along with rules that apply to _all_ subgraphs.
+You can configure which HTTP headers the Apollo Router includes in its requests to each of your subgraphs. You can define per-subgraph header rules, along with rules that apply to _all_ subgraphs.
 
-You define header rules in your [YAML configuration file](./overview/#configuration-file), like so:
+You define header rules in your [YAML configuration file](./overview/#yaml-config-file), like so:
 
 ```yaml title="router.yaml"
 # ...other configuration...
@@ -74,6 +74,38 @@ Enables you to add custom headers to requests going to a specific subgraph. Thes
     name: "sent-from-our-apollo-router"
     value: "indeed"
 ```
+
+## Rule ordering
+
+Header rules are applied in the same order they're declared, and later rules can _override_ the effects of earlier rules. Consider this example:
+
+<p style="margin-bottom: 0;">❌</p>
+
+```yaml title="bad_configuration.yaml"
+headers:
+all:
+  - remove:
+    named: "test"
+  - propagate:
+    matching: .*
+```
+
+In this example, first any header named `test` is removed from the list of headers to propagate. However, _the list of headers to propagate is currently empty!_ Next, the `propagate` rule adds _all_ headers to the propagation list, _including_ `test`.
+
+To correctly remove a header from the propagation list, make sure to define your `remove` rule _after_ any `propagate` rules:
+
+<p style="margin-bottom: 0;">✅</p>
+
+```yaml title="good_configuration.yaml"
+headers:
+all:
+  - propagate:
+    matching: .*
+  - remove:
+    named: "test"
+```
+
+With this ordering, first all headers are added to the propagation list, then the `test` header is removed.
 
 ## Example
 

@@ -25,24 +25,29 @@ in lieu of an official changelog.
     breaking change, also add a BREAKING label.
 4. Set the release date in `NEXT_CHANGELOG.md`. Add this release to the
     `CHANGELOG.md`. Use the structure of previous entries.
-5. Update `docker.mdx` with the release version.
-6. Update `federation-version-support.mdx` with the latest version info. Use https://github.com/apollographql/version_matrix to generate the version matrix.
+5. Update `docker.mdx` and `kubernetes.mdx` with the release version.
+6. Update `helm/chart/router/Chart.yaml` and in `helm/chart/router/README.md` as follows:
+   - increment the version. e.g. `version: 0.1.2` becomes `version: 0.1.3`
+   - update the appVersion to the release version. e.g.: `appVersion: "v0.9.0"`
+7. Update `federation-version-support.mdx` with the latest version info. Use https://github.com/apollographql/version_matrix to generate the version matrix.
+8. Update the version in docker-compose files in `dockerfiles` directory.
 
 ### Start a release PR
 
 1. Make sure you have `cargo` installed on your machine and in your `PATH`.
 2. Create a new branch "#.#.#" where "#.#.#" is this release's version
     (release) or "#.#.#-rc.#" (release candidate)
-3. Update the version in `*/Cargo.toml`.
+3. Update the version in `*/Cargo.toml` (do not forget the ones in scaffold templates).
+4. Add a new section in `CHANGELOG.md` with the contents of `NEXT_CHANGELOG.md`
+5. Put a Release date and the version number on the new `CHANGELOG.md` section
 4. Update the version in `NEXT_CHANGELOG.md`.
 5. Clear `NEXT_CHANGELOG.md` leaving only the template.
-6. Update the version in `deny.toml` in the `[[licenses.clarify]]` sections for `apollo-router-core`, `apollo-router` and `apollo-spaceport`.
-7. Run `cargo check` so the lock file gets updated.
-8. Run `cargo xtask check-compliance`.
-9. Push up a commit with the `*/Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` and
+6. Run `cargo check` so the lock file gets updated.
+7. Run `cargo xtask check-compliance`.
+8. Push up a commit with the `*/Cargo.toml`, `Cargo.lock`, `CHANGELOG.md` and
     `NEXT_CHANGELOG.md` changes. The commit message should be "release: v#.#.#" or
     "release: v#.#.#-rc.#"
-10. Request review from the Router team.
+9. Request review from the Router team.
 
 ### Review
 

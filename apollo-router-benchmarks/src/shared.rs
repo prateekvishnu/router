@@ -1,17 +1,18 @@
 // this file is shared between the tests and benchmarks, using
 // include!() instead of as a pub module, so it is only compiled
 // in dev mode
-use apollo_router_core::plugin::utils::test::mock::subgraph::MockSubgraph;
-use apollo_router_core::{
-    PluggableRouterServiceBuilder, ResponseBody, RouterRequest, RouterResponse, Schema,
-};
+use apollo_router::plugin::test::MockSubgraph;
+use apollo_router::services::{ RouterRequest, RouterResponse};
+use apollo_router::services::PluggableRouterServiceBuilder;
+use apollo_router::Schema;
+use apollo_router::graphql::Response;
 use once_cell::sync::Lazy;
 use serde_json::json;
 use std::sync::Arc;
 use tower::{util::BoxCloneService, BoxError, Service, ServiceExt};
 
-static EXPECTED_RESPONSE: Lazy<ResponseBody> = Lazy::new(|| {
-    ResponseBody::GraphQL(serde_json::from_str(r#"{"data":{"topProducts":[{"upc":"1","name":"Table","reviews":[{"id":"1","product":{"name":"Table"},"author":{"id":"1","name":"Ada Lovelace"}},{"id":"4","product":{"name":"Table"},"author":{"id":"2","name":"Alan Turing"}}]},{"upc":"2","name":"Couch","reviews":[{"id":"2","product":{"name":"Couch"},"author":{"id":"1","name":"Ada Lovelace"}}]}]}}"#).unwrap())
+static EXPECTED_RESPONSE: Lazy<Response> = Lazy::new(|| {
+    serde_json::from_str(r#"{"data":{"topProducts":[{"upc":"1","name":"Table","reviews":[{"id":"1","product":{"name":"Table"},"author":{"id":"1","name":"Ada Lovelace"}},{"id":"4","product":{"name":"Table"},"author":{"id":"2","name":"Alan Turing"}}]},{"upc":"2","name":"Couch","reviews":[{"id":"2","product":{"name":"Couch"},"author":{"id":"1","name":"Ada Lovelace"}}]}]}}"#).unwrap()
 });
 
 static QUERY: &str = r#"query TopProducts($first: Int) { topProducts(first: $first) { upc name reviews { id product { name } author { id name } } } }"#;
@@ -30,9 +31,12 @@ pub async fn basic_composition_benchmark(
         .unwrap()
         .call(request)
         .await
+        .unwrap()
+        .next_response()
+        .await
         .unwrap();
 
-    assert_eq!(response.response.body(), &*EXPECTED_RESPONSE,);
+    assert_eq!(response, *EXPECTED_RESPONSE);
 }
 
 pub fn setup() -> PluggableRouterServiceBuilder {

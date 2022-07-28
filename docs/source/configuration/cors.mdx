@@ -1,13 +1,76 @@
 ---
 title: Configuring CORS in the Apollo Router
 sidebar_title: CORS
+description: Control browser access to your router
 ---
 
-import { Link } from 'gatsby';
+> **This article describes CORS configuration that's specific to the Apollo Router**. For a more general introduction to CORS and common considerations, see the following sections:
+>
+> * [Why use CORS?](/apollo-server/security/cors#why-use-cors)
+> * [Choosing CORS options for your project](/apollo-server/security/cors#choosing-cors-options-for-your-project)
 
-The Apollo Router supports [Cross-Origin Resource Sharing](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS) (CORS) to indicate which origins it accepts requests from. **By default, the router accepts requests from the Apollo studio**.
+By default, the Apollo Router enables _only_ Apollo Studio to initiate browser connections to it. If your supergraph serves data to other browser-based applications, you need to do one of the following in the `server.cors` section of your router's [YAML config file](./overview/#yaml-config-file):
 
-If your environment has security requirements around CORS, you can specify them in the router's [configuration file](./overview/#configuration-file):
+* Add the origins of those web applications to the router's list of allowed `origins`.
+    * Use this option if there is a known, finite list of web applications that consume your supergraph.
+    * You _must_ use this option if clients need to [authenticate their requests with cookies](#passing-credentials-with-cors).
+* Enable the `allow_any_origin` option.
+    * Use this option if your supergraph is a public API with arbitrarily many web app consumers.
+    * With this option enabled, the router sends the [wildcard (`*`)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Origin#directives) value for the `Access-Control-Allow-Origin` header. This enables _any_ website to initiate browser connections to it (but they can't provide cookies or other credentials).
+
+The following snippet includes an example of each option (use only one):
+
+```yaml title="router.yaml"
+server:
+  cors:
+
+    # Set to true to allow any origin
+    # (Defaults to false)
+    allow_any_origin: true
+
+    # List of accepted origins
+    # (Ignored if allow_any_origin is true)
+    # (Defaults to the Apollo Studio url: `https://studio.apollographql.com`)
+    origins:
+      - https://www.your-app.example.com/
+      - https://studio.apollographql.com/ # Keep this so Apollo Studio can run queries against your router
+```
+
+You can also disable CORS entirely by setting `origins` to an empty list:
+
+```yml title="router.yaml"
+server:
+  cors:
+    origins: []
+```
+
+> If your router serves exclusively _non_-browser-based clients, you probably don't need to modify the default CORS configuration.
+
+## Passing credentials
+
+If your router requires requests to [include a user's credentials](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS#requests_with_credentials) (e.g., via cookies), you need to modify your CORS configuration to tell the browser those credentials are allowed.
+
+You can enable credentials with CORS by setting the [`Access-Control-Allow-Credentials`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Credentials) HTTP header to `true`.
+
+> **Your router's config file must specify individual `origins` to support credentialed requests.** If your router enables `allow_any_origin`, your browser will refuse to send credentials.
+
+To allow browsers to pass credentials to the Apollo Router, set `allow_credentials` to `true`, like so:
+
+```yaml {6} title="router.yaml"
+server:
+  cors:
+    origins:
+      - https://www.your-app.example.com/
+      - https://studio.apollographql.com/
+    allow_credentials: true
+```
+
+For examples of sending cookies and authorization headers from Apollo Client, see [Authentication](/react/networking/authentication/).
+
+
+## All `cors` options
+
+The following snippet shows all CORS configuration for the Apollo Router:
 
 ```yaml title="router.yaml"
 server:
@@ -24,15 +87,18 @@ server:
     # (Ignored if allow_any_origin is true)
     # (Defaults to the Apollo Studio url: `https://studio.apollographql.com`)
     origins:
-      - https://www.my-frontend.com
+      - https://www.your-app.example.com/
+      - https://studio.apollographql.com/ # Keep this so Apollo Studio can still run queries against your router
 
     # Set to true to add the `Access-Control-Allow-Credentials` header
     # (Defaults to false)
     allow_credentials: true
 
     # The headers to allow.
-    # (Defaults to [ Content-Type ], which is required for Apollo Studio)
-    allow_headers: [ Content-Type, Authorization ]
+    # If this field is not set, CORS will default to the `mirror_request` mode,
+    # which mirrors the received `access-control-request-headers`
+    # (This is equivalent to allowing any headers)
+    allow_headers: [ Content-Type, Authorization, x-my-custom-required-header, x-and-an-other-required-header ]
 
     # Allowed request methods
     # (Defaults to [ GET, POST, OPTIONS ])

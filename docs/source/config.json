@@ -1,31 +1,34 @@
 {
-  "title": "Router (preview)",
+  "title": "Router",
   "algoliaFilters": [
     "docset:router"
   ],
   "sidebar": {
     "Introduction": "/",
     "Quickstart": "/quickstart",
-    "Migrating from @apollo/gateway": "/migrating-from-gateway",
+    "Moving from @apollo/gateway": "/migrating-from-gateway",
     "Federation version support": "/federation-version-support",
     "Configuration": {
       "Overview": "/configuration/overview",
-      "Health check": "/configuration/health-checks",
       "CORS": "/configuration/cors",
+      "CSRF prevention": "/configuration/csrf",
       "Logging": "/configuration/logging",
       "Header propagation": "/configuration/header-propagation",
-      "Apollo telemetry": "/configuration/apollo-telemetry",
-      "Metrics": "/configuration/metrics",
-      "Tracing": "/configuration/tracing",
       "Traffic shaping": "/configuration/traffic-shaping",
-      "Subgraph Error Inclusion": "/configuration/subgraph-error-inclusion"
+      "Subgraph error inclusion (experimental)": "/configuration/subgraph-error-inclusion"
+    },
+    "Monitoring & Metrics": {
+      "Health check": "/configuration/health-checks",
+      "Apollo Studio reporting": "/configuration/apollo-telemetry",
+      "Collecting metrics": "/configuration/metrics",
+      "Tracing": "/configuration/tracing"
     },
     "Containerization": {
       "Overview": "/containerization/overview",
       "Docker": "/containerization/docker",
       "Kubernetes": "/containerization/kubernetes"
     },
-    "Development workflow": {
+    "Development Workflow": {
       "Build and run queries": "/development-workflow/build-run-queries",
       "Request format": "/development-workflow/requests",
       "Apollo Studio Explorer": "https://www.apollographql.com/docs/studio/explorer/"
@@ -38,9 +41,10 @@
     "Customizations": {
       "Overview": "/customizations/overview",
       "Native Rust plugins": "/customizations/native",
-      "Rhai scripts (experimental)": "/customizations/rhai"
+      "Custom binary": "/customizations/custom-binary",
+      "Rhai scripts": "/customizations/rhai"
     },
-    "Third-Party Support": {
+    "Subgraph Support": {
       "Subgraph-compatible libraries": "https://www.apollographql.com/docs/federation/v2/other-servers/",
       "Subgraph specification": "https://www.apollographql.com/docs/federation/v2/federation-spec/"
     }

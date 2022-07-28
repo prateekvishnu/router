@@ -16,8 +16,15 @@ Built in functionality in the Apollo Router.
 Extending the functionality of the Apollo Router.
 
 ### Rhai
-Experimental scripting support.
+Scripting support.
+* [Time request and add to header](./add-timestamp-header)
 * [Cookies to headers](./cookies-to-headers)
+* [Operation Name to headers](./op-name-to-header)
+* [Logging](./rhai-logging)
+* [Response data modification](./rhai-data-response-mutate)
+* [Response errors modification](./rhai-error-response-mutate)
+* [Subgraph request logging](./rhai-subgraph-request-log)
+* [Surrogate cache key creation](./rhai-surrogate-cache-key)
 
 ### Native Rust Plugins
 Writing your own plugins in rust!

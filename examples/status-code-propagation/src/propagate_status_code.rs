@@ -1,10 +1,16 @@
-use apollo_router_core::{
-    register_plugin, Plugin, RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse,
-};
+use apollo_router::plugin::Plugin;
+use apollo_router::register_plugin;
+use apollo_router::services::RouterRequest;
+use apollo_router::services::RouterResponse;
+use apollo_router::services::SubgraphRequest;
+use apollo_router::services::SubgraphResponse;
 use http::StatusCode;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use tower::{util::BoxService, BoxError, ServiceExt};
+use serde::Deserialize;
+use serde::Serialize;
+use tower::util::BoxService;
+use tower::BoxError;
+use tower::ServiceExt;
 
 // This configuration will be used
 // to Deserialize the yml configuration
@@ -30,7 +36,7 @@ impl Plugin for PropagateStatusCode {
     }
 
     fn subgraph_service(
-        &mut self,
+        &self,
         _name: &str,
         service: BoxService<SubgraphRequest, SubgraphResponse, BoxError>,
     ) -> BoxService<SubgraphRequest, SubgraphResponse, BoxError> {
@@ -43,21 +49,16 @@ impl Plugin for PropagateStatusCode {
                     // upsert allows us to:
                     // - check for the presence of a value for `status_codes` (first parameter)
                     // update the value if present (second parameter)
-                    // insert a value if not (third parameter)
                     res.context
-                        .upsert(
-                            &"status_code".to_string(),
-                            |status_code: u16| {
-                                // return the status code with the highest priority
-                                for &code in all_status_codes.iter() {
-                                    if code == response_status_code || code == status_code {
-                                        return code;
-                                    }
+                        .upsert(&"status_code".to_string(), |status_code: u16| {
+                            // return the status code with the highest priority
+                            for &code in all_status_codes.iter() {
+                                if code == response_status_code || code == status_code {
+                                    return code;
                                 }
-                                status_code
-                            },
-                            || res.response.status().as_u16(),
-                        )
+                            }
+                            status_code
+                        })
                         .expect("couldn't insert status codes");
                 }
                 res
@@ -67,7 +68,7 @@ impl Plugin for PropagateStatusCode {
 
     // At this point, all subgraph_services will have pushed their status codes if they match the `watch list`.
     fn router_service(
-        &mut self,
+        &self,
         service: BoxService<RouterRequest, RouterResponse, BoxError>,
     ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
         service
@@ -92,17 +93,22 @@ register_plugin!("example", "propagate_status_code", PropagateStatusCode);
 
 // Writing plugins means writing tests that make sure they behave as expected!
 //
-// apollo_router_core provides a lot of utilities that will allow you to craft requests, responses,
+// apollo_router provides a lot of utilities that will allow you to craft requests, responses,
 // and test your plugins in isolation:
 #[cfg(test)]
 mod tests {
-    use crate::propagate_status_code::{PropagateStatusCode, PropagateStatusCodeConfig};
-    use apollo_router_core::{
-        plugin::utils, Plugin, RouterRequest, RouterResponse, SubgraphRequest, SubgraphResponse,
-    };
+    use apollo_router::plugin::test;
+    use apollo_router::plugin::Plugin;
+    use apollo_router::services::RouterRequest;
+    use apollo_router::services::RouterResponse;
+    use apollo_router::services::SubgraphRequest;
+    use apollo_router::services::SubgraphResponse;
     use http::StatusCode;
     use serde_json::json;
     use tower::ServiceExt;
+
+    use crate::propagate_status_code::PropagateStatusCode;
+    use crate::propagate_status_code::PropagateStatusCodeConfig;
 
     // This test ensures the router will be able to
     // find our `propagate_status_code` plugin,
@@ -110,7 +116,7 @@ mod tests {
     // see `router.yaml` for more information
     #[tokio::test]
     async fn plugin_registered() {
-        apollo_router_core::plugins()
+        apollo_router::plugin::plugins()
             .get("example.propagate_status_code")
             .expect("Plugin not found")
             .create_instance(&json!({ "status_codes" : [500, 403, 401] }))
@@ -126,7 +132,7 @@ mod tests {
 
     #[tokio::test]
     async fn subgraph_service_shouldnt_add_matching_status_code() {
-        let mut mock_service = utils::test::MockSubgraphService::new();
+        let mut mock_service = test::MockSubgraphService::new();
 
         // Return StatusCode::FORBIDDEN, which shall be added to our status_codes
         mock_service.expect_call().times(1).returning(move |_| {
@@ -161,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn subgraph_service_shouldnt_add_not_matching_status_code() {
-        let mut mock_service = utils::test::MockSubgraphService::new();
+        let mut mock_service = test::MockSubgraphService::new();
 
         // Return StatusCode::OK, which shall NOT be added to our status_codes
         mock_service.expect_call().times(1).returning(move |_| {
@@ -198,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_service_override_status_code() {
-        let mut mock_service = utils::test::MockRouterService::new();
+        let mut mock_service = test::MockRouterService::new();
 
         mock_service
             .expect_call()
@@ -207,10 +213,13 @@ mod tests {
                 let context = router_request.context;
                 // Insert several status codes which shall override the router response status
                 context
-                    .insert(&"status_code".to_string(), json!(500))
+                    .insert(&"status_code".to_string(), json!(500u16))
                     .expect("couldn't insert status_code");
 
-                RouterResponse::fake_builder().context(context).build()
+                Ok(RouterResponse::fake_builder()
+                    .context(context)
+                    .build()
+                    .unwrap())
             });
 
         let mock_service = mock_service.build();
@@ -227,17 +236,19 @@ mod tests {
             .build()
             .expect("expecting valid request");
 
-        let service_response = service_stack.oneshot(router_request).await.unwrap();
+        let mut service_response = service_stack.oneshot(router_request).await.unwrap();
 
         assert_eq!(
             StatusCode::INTERNAL_SERVER_ERROR,
             service_response.response.status()
         );
+
+        let _response = service_response.next_response().await.unwrap();
     }
 
     #[tokio::test]
     async fn router_service_do_not_override_status_code() {
-        let mut mock_service = utils::test::MockRouterService::new();
+        let mut mock_service = test::MockRouterService::new();
 
         mock_service
             .expect_call()
@@ -245,7 +256,10 @@ mod tests {
             .returning(move |router_request: RouterRequest| {
                 let context = router_request.context;
                 // Don't insert any StatusCode
-                RouterResponse::fake_builder().context(context).build()
+                Ok(RouterResponse::fake_builder()
+                    .context(context)
+                    .build()
+                    .unwrap())
             });
 
         let mock_service = mock_service.build();
@@ -262,8 +276,9 @@ mod tests {
             .build()
             .expect("expecting valid request");
 
-        let service_response = service_stack.oneshot(router_request).await.unwrap();
+        let mut service_response = service_stack.oneshot(router_request).await.unwrap();
 
         assert_eq!(StatusCode::OK, service_response.response.status());
+        let _response = service_response.next_response().await.unwrap();
     }
 }

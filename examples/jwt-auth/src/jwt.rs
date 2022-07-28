@@ -5,7 +5,7 @@
 //!     and is purely intended of an illustration of an approach to JWT verification
 //!     via a router plugin.
 //!
-//! The plugin uses [`jwt_simple`]: https://crates.io/crates/jwt-simple
+//! The plugin uses [`jwt_simple`](https://crates.io/crates/jwt-simple)
 //!
 //! The plugin provides support for HMAC algorithms. Additional algorithms (RSA, etc..)
 //! are supported by the crate, but not implemented in this plugin (yet...)
@@ -60,10 +60,16 @@
 //!  - Token refresh
 //!  - ...
 
-use apollo_router_core::Context;
-use apollo_router_core::{
-    register_plugin, Plugin, RouterRequest, RouterResponse, ServiceBuilderExt,
-};
+use std::ops::ControlFlow;
+use std::str::FromStr;
+
+use apollo_router::graphql;
+use apollo_router::layers::ServiceBuilderExt;
+use apollo_router::plugin::Plugin;
+use apollo_router::register_plugin;
+use apollo_router::services::RouterRequest;
+use apollo_router::services::RouterResponse;
+use apollo_router::Context;
 use http::header::AUTHORIZATION;
 use http::StatusCode;
 use jwt_simple::prelude::*;
@@ -71,10 +77,11 @@ use jwt_simple::Error;
 use schemars::JsonSchema;
 use serde::de;
 use serde::Deserialize;
-use std::ops::ControlFlow;
-use std::str::FromStr;
 use strum_macros::EnumString;
-use tower::{util::BoxService, BoxError, ServiceBuilder, ServiceExt};
+use tower::util::BoxService;
+use tower::BoxError;
+use tower::ServiceBuilder;
+use tower::ServiceExt;
 
 // It's a shame that we can't just have one enum which finds the algorithm and contains
 // the verifier, but the verification structs don't support Default, so we can't
@@ -203,7 +210,7 @@ impl Plugin for JwtAuth {
     }
 
     fn router_service(
-        &mut self,
+        &self,
         service: BoxService<RouterRequest, RouterResponse, BoxError>,
     ) -> BoxService<RouterRequest, RouterResponse, BoxError> {
         // We are going to use the `jwt-simple` crate for our JWT verification.
@@ -232,7 +239,7 @@ impl Plugin for JwtAuth {
                     status: StatusCode,
                 ) -> Result<ControlFlow<RouterResponse, RouterRequest>, BoxError> {
                     let res = RouterResponse::error_builder()
-                        .errors(vec![apollo_router_core::Error {
+                        .errors(vec![graphql::Error {
                             message: msg,
                             ..Default::default()
                         }])
@@ -377,12 +384,17 @@ register_plugin!("example", "jwt", JwtAuth);
 
 // Writing plugins means writing tests that make sure they behave as expected!
 //
-// apollo_router_core provides a lot of utilities that will allow you to craft requests, responses,
+// apollo_router provides a lot of utilities that will allow you to craft requests, responses,
 // and test your plugins in isolation:
 #[cfg(test)]
 mod tests {
+    use apollo_router::graphql;
+    use apollo_router::plugin::test;
+    use apollo_router::plugin::Plugin;
+    use apollo_router::services::RouterRequest;
+    use apollo_router::services::RouterResponse;
+
     use super::*;
-    use apollo_router_core::{plugin::utils, Plugin, RouterRequest, RouterResponse};
 
     // This test ensures the router will be able to
     // find our `JwtAuth` plugin,
@@ -390,7 +402,7 @@ mod tests {
     // see `router.yaml` for more information
     #[tokio::test]
     async fn plugin_registered() {
-        apollo_router_core::plugins()
+        apollo_router::plugin::plugins()
             .get("example.jwt")
             .expect("Plugin not found")
             .create_instance(&serde_json::json!({ "algorithm": "HS256" , "key": "629709bdc3bd794312ccc3a1c47beb03ac7310bc02d32d4587e59b5ad81c99ba"}))
@@ -404,7 +416,7 @@ mod tests {
         // It does not have any behavior, because we do not expect it to be called.
         // If it is called, the test will panic,
         // letting us know JwtAuth did not behave as expected.
-        let mock_service = utils::test::MockRouterService::new().build();
+        let mock_service = test::MockRouterService::new().build();
 
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
         let service_stack = JwtAuth::default().router_service(mock_service.boxed());
@@ -415,7 +427,7 @@ mod tests {
             .expect("expecting valid request");
 
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_without_any_authorization_header)
             .await
             .unwrap();
@@ -424,8 +436,7 @@ mod tests {
         assert_eq!(StatusCode::UNAUTHORIZED, service_response.response.status());
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert_eq!(
             "Missing 'authorization' header".to_string(),
@@ -439,7 +450,7 @@ mod tests {
         // It does not have any behavior, because we do not expect it to be called.
         // If it is called, the test will panic,
         // letting us know JwtAuth did not behave as expected.
-        let mock_service = utils::test::MockRouterService::new().build();
+        let mock_service = test::MockRouterService::new().build();
 
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
         let service_stack = JwtAuth::default().router_service(mock_service.boxed());
@@ -451,7 +462,7 @@ mod tests {
             .expect("expecting valid request");
 
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_with_no_bearer_in_auth)
             .await
             .unwrap();
@@ -460,8 +471,7 @@ mod tests {
         assert_eq!(StatusCode::BAD_REQUEST, service_response.response.status());
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert_eq!(
             "'should start with Bearer' is not correctly formatted",
@@ -475,7 +485,7 @@ mod tests {
         // It does not have any behavior, because we do not expect it to be called.
         // If it is called, the test will panic,
         // letting us know JwtAuth did not behave as expected.
-        let mock_service = utils::test::MockRouterService::new().build();
+        let mock_service = test::MockRouterService::new().build();
 
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
         let service_stack = JwtAuth::default().router_service(mock_service.boxed());
@@ -487,7 +497,7 @@ mod tests {
             .expect("expecting valid request");
 
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_with_too_many_spaces_in_auth)
             .await
             .unwrap();
@@ -496,8 +506,7 @@ mod tests {
         assert_eq!(StatusCode::BAD_REQUEST, service_response.response.status());
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert_eq!(
             "'Bearer  ' is not correctly formatted",
@@ -511,7 +520,7 @@ mod tests {
         // It does not have any behavior, because we do not expect it to be called.
         // If it is called, the test will panic,
         // letting us know JwtAuth did not behave as expected.
-        let mock_service = utils::test::MockRouterService::new().build();
+        let mock_service = test::MockRouterService::new().build();
 
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
         let service_stack = JwtAuth::default().router_service(mock_service.boxed());
@@ -524,7 +533,7 @@ mod tests {
             .expect("expecting valid request");
 
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_with_appropriate_auth)
             .await
             .unwrap();
@@ -536,8 +545,7 @@ mod tests {
         );
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert_eq!(
             "Only hmac support is implemented. Check configuration for typos",
@@ -548,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn test_hmac_jwtauth_accepts_valid_tokens() {
         // create a mock service we will use to test our plugin
-        let mut mock = utils::test::MockRouterService::new();
+        let mut mock = test::MockRouterService::new();
 
         // The expected reply is going to be JSON returned in the RouterResponse { data } section.
         let expected_mock_response_data = "response created within the mock";
@@ -585,7 +593,7 @@ mod tests {
         .expect("json must be valid");
 
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
-        let mut jwt_auth = JwtAuth::new(conf)
+        let jwt_auth = JwtAuth::new(conf)
             .await
             .expect("valid configuration should succeed");
 
@@ -610,7 +618,7 @@ mod tests {
             .expect("expecting valid request");
 
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_with_appropriate_auth)
             .await
             .unwrap();
@@ -619,8 +627,7 @@ mod tests {
         assert_eq!(StatusCode::OK, service_response.response.status());
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert!(graphql_response.errors.is_empty());
         assert_eq!(expected_mock_response_data, graphql_response.data.unwrap())
@@ -632,7 +639,7 @@ mod tests {
         // It does not have any behavior, because we do not expect it to be called.
         // If it is called, the test will panic,
         // letting us know JwtAuth did not behave as expected.
-        let mock_service = utils::test::MockRouterService::new().build();
+        let mock_service = test::MockRouterService::new().build();
 
         // Create valid configuration for testing HMAC algorithm HS256
         let key = "629709bdc3bd794312ccc3a1c47beb03ac7310bc02d32d4587e59b5ad81c99ba";
@@ -643,7 +650,7 @@ mod tests {
         }))
         .expect("json must be valid");
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
-        let mut jwt_auth = JwtAuth::new(conf)
+        let jwt_auth = JwtAuth::new(conf)
             .await
             .expect("valid configuration should succeed");
 
@@ -661,7 +668,7 @@ mod tests {
             .expect("expecting valid request");
 
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_with_appropriate_auth)
             .await
             .unwrap();
@@ -670,8 +677,7 @@ mod tests {
         assert_eq!(StatusCode::FORBIDDEN, service_response.response.status());
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert_eq!(
             format!("{token} is not authorized: expiry period exceeds policy limit"),
@@ -685,7 +691,7 @@ mod tests {
         // It does not have any behavior, because we do not expect it to be called.
         // If it is called, the test will panic,
         // letting us know JwtAuth did not behave as expected.
-        let mock_service = utils::test::MockRouterService::new().build();
+        let mock_service = test::MockRouterService::new().build();
 
         // Create valid configuration for testing HMAC algorithm HS256
         let key = "629709bdc3bd794312ccc3a1c47beb03ac7310bc02d32d4587e59b5ad81c99ba";
@@ -698,7 +704,7 @@ mod tests {
         .expect("json must be valid");
 
         // In this service_stack, JwtAuth is `decorating` or `wrapping` our mock_service.
-        let mut jwt_auth = JwtAuth::new(conf)
+        let jwt_auth = JwtAuth::new(conf)
             .await
             .expect("valid configuration should succeed");
 
@@ -719,7 +725,7 @@ mod tests {
         // Let's sleep until our token has expired
         tokio::time::sleep(tokio::time::Duration::from_secs(tolerance + token_life + 1)).await;
         // ...And call our service stack with it
-        let service_response = service_stack
+        let mut service_response = service_stack
             .oneshot(request_with_appropriate_auth)
             .await
             .unwrap();
@@ -728,8 +734,7 @@ mod tests {
         assert_eq!(StatusCode::FORBIDDEN, service_response.response.status());
 
         // with the expected error message
-        let graphql_response: apollo_router_core::Response =
-            service_response.response.into_body().try_into().unwrap();
+        let graphql_response: graphql::Response = service_response.next_response().await.unwrap();
 
         assert_eq!(
             format!("{token} is not authorized: Token has expired"),

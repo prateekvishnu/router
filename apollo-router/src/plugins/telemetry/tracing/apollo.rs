@@ -1,10 +1,14 @@
 //! Tracing configuration for apollo telemetry.
-use crate::plugins::telemetry::apollo::Config;
-use crate::plugins::telemetry::config::Trace;
-use crate::plugins::telemetry::tracing::apollo_telemetry::{SpaceportConfig, StudioGraph};
-use crate::plugins::telemetry::tracing::{apollo_telemetry, TracingConfigurator};
+// This entire file is license key functionality
 use opentelemetry::sdk::trace::Builder;
 use tower::BoxError;
+
+use crate::plugins::telemetry::apollo::Config;
+use crate::plugins::telemetry::config::Trace;
+use crate::plugins::telemetry::tracing::apollo_telemetry;
+use crate::plugins::telemetry::tracing::apollo_telemetry::SpaceportConfig;
+use crate::plugins::telemetry::tracing::apollo_telemetry::StudioGraph;
+use crate::plugins::telemetry::tracing::TracingConfigurator;
 
 impl TracingConfigurator for Config {
     fn apply(&self, builder: Builder, trace_config: &Trace) -> Result<Builder, BoxError> {

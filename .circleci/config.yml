@@ -16,7 +16,7 @@ executors:
     resource_class: large
   rust_macos: &rust_macos_executor
     macos:
-      xcode: 11.4
+      xcode: 11.7
   rust_windows: &rust_windows_executor
     machine:
       image: "windows-server-2019-vs2019:stable"
@@ -27,7 +27,7 @@ parameters:
   cache_version:
     type: string
     # increment that one to invalidate all the caches
-    default: v6.{{ checksum "rust-toolchain.toml" }}
+    default: v7.{{ checksum "rust-toolchain.toml" }}
 
 # These are common environment variables that we want to set on on all jobs.
 # While these could conceivably be set on the CircleCI project settings'
@@ -42,10 +42,6 @@ common_job_environment: &common_job_environment
   NPM_VERSION: 7.10.0
 
 commands:
-  initialize_submodules:
-    steps:
-      - run: git submodule update --recursive --init
-
   linux_install_baseline:
     steps:
       - run:
@@ -244,7 +240,7 @@ commands:
     steps:
       - rust/build:
           with_cache: false
-          crate: --locked -p apollo-router -p apollo-router-core
+          crate: --locked -p apollo-router
   build_all_permutations:
     steps:
       - build_common_permutations
@@ -286,12 +282,16 @@ commands:
 
   windows_test_workspace:
     steps:
+      - run:
+          name: Start jaeger
+          background: true
+          command: jaeger\jaeger-all-in-one.exe
       - restore_cache:
           name: Restore .cargo
           keys:
             - rust-cargo-<< pipeline.parameters.cache_version >>-test-windows-{{ checksum "Cargo.lock" }}
             - rust-cargo-<< pipeline.parameters.cache_version >>-test-windows
-      - run: cargo xtask test --with-demo
+      - run: cargo test --all --locked
       - save_cache:
           name: Save .cargo
           key: rust-cargo-<< pipeline.parameters.cache_version >>-test-windows-{{ checksum "Cargo.lock" }}
@@ -303,22 +303,33 @@ commands:
       os:
         type: string
     steps:
+      - run:
+          name: Start jaeger
+          background: true
+          command: ./jaeger/jaeger-all-in-one
       - restore_cache:
-          name: Restore .cargo and node_modules
+          name: Restore .cargo
           keys:
-            - rust-cargo-<< pipeline.parameters.cache_version >>-test-<< parameters.os >>-{{ checksum "Cargo.lock" }}-{{ checksum "dockerfiles/federation-demo/federation-demo/package.json" }}-{{ checksum "dockerfiles/federation-demo/federation-demo/package-lock.json" }}
-            - rust-cargo-<< pipeline.parameters.cache_version >>-test-<< parameters.os >>-{{ checksum "Cargo.lock" }}-{{ checksum "dockerfiles/federation-demo/federation-demo/package.json" }}
             - rust-cargo-<< pipeline.parameters.cache_version >>-test-<< parameters.os >>-{{ checksum "Cargo.lock" }}
             - rust-cargo-<< pipeline.parameters.cache_version >>-test-<< parameters.os >>
 
-      - run: cargo xtask test --with-demo
+      # As of rustc 1.61.0, must limit the number of linux jobs or we run out of memory (large executor/8GB)
+      - when:
+          condition:
+            equal: [linux, << parameters.os >>]
+          steps:
+            - run: cargo test --jobs 3 --all --locked
+      - when:
+          condition:
+            equal: [macos, << parameters.os >>]
+          steps:
+            - run: cargo test --all --locked
 
       - save_cache:
-          name: Save .cargo and node_modules
-          key: rust-cargo-<< pipeline.parameters.cache_version >>-test-<< parameters.os >>-{{ checksum "Cargo.lock" }}-{{ checksum "dockerfiles/federation-demo/federation-demo/package.json" }}-{{ checksum "dockerfiles/federation-demo/federation-demo/package-lock.json" }}
+          name: Save .cargo
+          key: rust-cargo-<< pipeline.parameters.cache_version >>-test-<< parameters.os >>-{{ checksum "Cargo.lock" }}
           paths:
             - ~/.cargo
-            - dockerfiles/federation-demo/federation-demo/node_modules
 
 jobs:
   lint:
@@ -353,6 +364,7 @@ jobs:
             equal: [*rust_linux_executor, << parameters.platform >>]
           steps:
             - linux_install_baseline
+            - linux_prepare_node_env
             - prepare_rust_env
             - xtask_check_compliance:
                 os: linux
@@ -400,7 +412,6 @@ jobs:
     executor: << parameters.platform >>
     steps:
       - checkout
-      - initialize_submodules
       - when:
           condition:
             equal: [*rust_linux_executor, << parameters.platform >>]

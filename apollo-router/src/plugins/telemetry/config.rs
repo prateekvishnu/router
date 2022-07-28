@@ -1,13 +1,18 @@
 //! Configuration for the telemetry plugin.
-use super::*;
-use crate::plugins::telemetry::metrics;
-use opentelemetry::sdk::Resource;
-use opentelemetry::{Array, KeyValue, Value};
-use schemars::JsonSchema;
-use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::time::Duration;
+
+use opentelemetry::sdk::Resource;
+use opentelemetry::Array;
+use opentelemetry::KeyValue;
+use opentelemetry::Value;
+use schemars::JsonSchema;
+use serde::Deserialize;
+
+use super::metrics::MetricsAttributesConf;
+use super::*;
+use crate::plugins::telemetry::metrics;
 
 pub trait GenericWith<T>
 where
@@ -54,7 +59,12 @@ pub struct Metrics {
 #[derive(Clone, Default, Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct MetricsCommon {
-    pub delay_interval: Duration,
+    pub delay_interval: Option<Duration>,
+    /// Configuration to add custom labels/attributes to metrics
+    pub attributes: Option<MetricsAttributesConf>,
+    #[serde(default)]
+    /// Resources
+    pub resources: HashMap<String, String>,
 }
 
 #[derive(Clone, Default, Debug, Deserialize, JsonSchema)]
@@ -213,6 +223,11 @@ impl From<&Trace> for opentelemetry::sdk::trace::Config {
                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
                 service_name.clone(),
             ));
+        } else if std::env::var("OTEL_SERVICE_NAME").is_err() {
+            resource_defaults.push(KeyValue::new(
+                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                "router".to_string(),
+            ));
         }
         if let Some(service_namespace) = &config.service_namespace {
             resource_defaults.push(KeyValue::new(
@@ -220,6 +235,17 @@ impl From<&Trace> for opentelemetry::sdk::trace::Config {
                 service_namespace.clone(),
             ));
         }
+
+        if let Some(executable_name) = std::env::current_exe().ok().and_then(|path| {
+            path.file_name()
+                .and_then(|p| p.to_str().map(|s| s.to_string()))
+        }) {
+            resource_defaults.push(KeyValue::new(
+                opentelemetry_semantic_conventions::resource::PROCESS_EXECUTABLE_NAME,
+                executable_name,
+            ));
+        }
+
         let resource = Resource::new(resource_defaults).merge(&mut Resource::new(
             config
                 .attributes

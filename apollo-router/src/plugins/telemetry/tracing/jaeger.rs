@@ -1,17 +1,25 @@
 //! Configuration for jaeger tracing.
-use crate::plugins::telemetry::config::{GenericWith, Trace};
-use crate::plugins::telemetry::tracing::TracingConfigurator;
-use opentelemetry::sdk::trace::{BatchSpanProcessor, Builder};
-use schemars::gen::SchemaGenerator;
-use schemars::schema::{Schema, SchemaObject};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use std::net::SocketAddr;
 use std::time::Duration;
+
+use opentelemetry::sdk::trace::BatchSpanProcessor;
+use opentelemetry::sdk::trace::Builder;
+use schemars::gen::SchemaGenerator;
+use schemars::schema::Schema;
+use schemars::schema::SchemaObject;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Serialize;
 use tower::BoxError;
 use url::Url;
 
+use super::deser_endpoint;
+use super::AgentEndpoint;
+use crate::plugins::telemetry::config::GenericWith;
+use crate::plugins::telemetry::config::Trace;
+use crate::plugins::telemetry::tracing::TracingConfigurator;
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+// Can't use #[serde(deny_unknown_fields)] because we're using flatten for endpoint
 pub struct Config {
     #[serde(flatten)]
     #[schemars(schema_with = "endpoint_schema")]
@@ -52,30 +60,18 @@ fn endpoint_schema(gen: &mut SchemaGenerator) -> Schema {
 pub enum Endpoint {
     Agent {
         #[schemars(with = "String", default = "default_agent_endpoint")]
+        #[serde(deserialize_with = "deser_endpoint")]
         endpoint: AgentEndpoint,
     },
     Collector {
+        #[schemars(with = "String")]
         endpoint: Url,
         username: Option<String>,
         password: Option<String>,
     },
 }
-
 fn default_agent_endpoint() -> &'static str {
     "default"
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case", untagged)]
-pub enum AgentEndpoint {
-    Default(AgentDefault),
-    Socket(SocketAddr),
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub enum AgentDefault {
-    Default,
 }
 
 impl TracingConfigurator for Config {
@@ -85,7 +81,12 @@ impl TracingConfigurator for Config {
             Endpoint::Agent { endpoint } => {
                 let socket = match endpoint {
                     AgentEndpoint::Default(_) => None,
-                    AgentEndpoint::Socket(s) => Some(s),
+                    AgentEndpoint::Url(u) => {
+                        let socket_addr = u.socket_addrs(|| None)?.pop().ok_or_else(|| {
+                            format!("cannot resolve url ({}) for jaeger agent", u)
+                        })?;
+                        Some(socket_addr)
+                    }
                 };
                 opentelemetry_jaeger::new_pipeline()
                     .with_trace_config(trace_config.into())

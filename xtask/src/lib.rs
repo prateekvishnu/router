@@ -1,15 +1,20 @@
 mod federation_demo;
 mod jaeger;
 
+use std::convert::TryFrom;
+use std::env;
+use std::process::Child;
+use std::process::Command;
+use std::str;
+
 pub use anyhow;
-use anyhow::{Context, Result};
+use anyhow::Context;
+use anyhow::Result;
 use camino::Utf8PathBuf;
 use cargo_metadata::MetadataCommand;
 pub use federation_demo::*;
 pub use jaeger::*;
 use once_cell::sync::Lazy;
-use std::process::{Child, Command};
-use std::{convert::TryFrom, env, str};
 
 const MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 #[cfg(not(windows))]
@@ -55,12 +60,24 @@ pub static TARGET_DIR: Lazy<Utf8PathBuf> = Lazy::new(|| {
 
 #[macro_export]
 macro_rules! cargo {
-    ($( $args:expr ),* $(,)?) => {{
+    (
+        $args:expr
+        $(
+            , env = {
+                $( $k: expr => $v: expr ),*
+                $(,)?
+            }
+        )?
+        $(,)?
+    ) => {{
         let mut command = ::std::process::Command::new(which::which("cargo")?);
 
-        $(
         command.args($args);
-        )*
+        $(
+            $(
+                command.env($k, $v);
+            )*
+        )?
 
         let status = command
             .current_dir(&*PKG_PROJECT_ROOT)

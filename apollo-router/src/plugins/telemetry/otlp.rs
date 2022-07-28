@@ -1,21 +1,30 @@
 //! Shared configuration for Otlp tracing and metrics.
-use crate::configuration::ConfigurationError;
-use crate::plugins::telemetry::config::GenericWith;
-use opentelemetry_otlp::{HttpExporterBuilder, TonicExporterBuilder, WithExportConfig};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use opentelemetry_otlp::HttpExporterBuilder;
+use opentelemetry_otlp::TonicExporterBuilder;
+use opentelemetry_otlp::WithExportConfig;
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde::Deserializer;
+use serde::Serialize;
+use serde_json::Value;
 use tonic::metadata::MetadataMap;
 use tonic::transport::ClientTlsConfig;
 use tower::BoxError;
 use url::Url;
 
+use crate::configuration::ConfigurationError;
+use crate::plugins::telemetry::config::GenericWith;
+use crate::plugins::telemetry::tracing::parse_url_for_endpoint;
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(deserialize_with = "deser_endpoint")]
+    #[schemars(with = "String")]
     pub endpoint: Endpoint,
     pub protocol: Option<Protocol>,
 
@@ -66,14 +75,28 @@ impl Config {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", untagged)]
 pub enum Endpoint {
     Default(EndpointDefault),
     Url(Url),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+fn deser_endpoint<'de, D>(deserializer: D) -> Result<Endpoint, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s == "default" {
+        return Ok(Endpoint::Default(EndpointDefault::Default));
+    }
+
+    let url = parse_url_for_endpoint(s).map_err(serde::de::Error::custom)?;
+
+    Ok(Endpoint::Url(url))
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub enum EndpointDefault {
     Default,
@@ -135,13 +158,13 @@ impl TryFrom<&TlsConfig> for tonic::transport::channel::ClientTlsConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub enum Secret {
+pub(crate) enum Secret {
     Env(String),
     File(PathBuf),
 }
 
 impl Secret {
-    pub fn read(&self) -> Result<String, ConfigurationError> {
+    pub(crate) fn read(&self) -> Result<String, ConfigurationError> {
         match self {
             Secret::Env(s) => std::env::var(s).map_err(ConfigurationError::CannotReadSecretFromEnv),
             Secret::File(path) => {
@@ -165,9 +188,12 @@ impl Default for Protocol {
 }
 
 mod metadata_map_serde {
-    use super::*;
     use std::collections::HashMap;
-    use tonic::metadata::{KeyAndValueRef, MetadataKey};
+
+    use tonic::metadata::KeyAndValueRef;
+    use tonic::metadata::MetadataKey;
+
+    use super::*;
 
     pub(crate) fn serialize<S>(map: &Option<MetadataMap>, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -234,5 +260,34 @@ mod metadata_map_serde {
             let de = serde_yaml::Deserializer::from_slice(&buffer);
             deserialize(de).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_configuration() {
+        let config: Config = serde_yaml::from_str("endpoint: default").unwrap();
+        assert_eq!(Endpoint::Default(EndpointDefault::Default), config.endpoint);
+
+        let config: Config = serde_yaml::from_str("endpoint: collector:1234").unwrap();
+        assert_eq!(
+            Endpoint::Url(Url::parse("http://collector:1234").unwrap()),
+            config.endpoint
+        );
+
+        let config: Config = serde_yaml::from_str("endpoint: https://collector:1234").unwrap();
+        assert_eq!(
+            Endpoint::Url(Url::parse("https://collector:1234").unwrap()),
+            config.endpoint
+        );
+
+        let config: Config = serde_yaml::from_str("endpoint: 127.0.0.1:1234").unwrap();
+        assert_eq!(
+            Endpoint::Url(Url::parse("http://127.0.0.1:1234").unwrap()),
+            config.endpoint
+        );
     }
 }

@@ -1,4 +1,6 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::criterion_group;
+use criterion::criterion_main;
+use criterion::Criterion;
 
 include!("../src/shared.rs");
 
@@ -8,9 +10,9 @@ fn from_elem(c: &mut Criterion) {
 
         let builder = setup();
 
-        let (router, _) = runtime.block_on(builder.build()).unwrap();
+        let router = runtime.block_on(builder.build()).unwrap();
         b.to_async(runtime)
-            .iter(|| basic_composition_benchmark(router.clone()));
+            .iter(|| basic_composition_benchmark(router.test_service()));
     });
 }
 
